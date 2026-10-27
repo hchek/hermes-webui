@@ -314,12 +314,3 @@ def test_frontend_session_list_sorts_effective_streaming_rows_first():
     assert "_isSessionEffectivelyStreaming(session)" in src
     assert "session.active_stream_id && session.has_pending_user_message" in src
     assert "const orderedSessions=[...sessions].sort(_sessionSidebarSortCompare);" in src
-
-
-def test_frontend_session_date_buckets_use_runtime_sort_timestamp():
-    src = (pathlib.Path(__file__).parent.parent / "static" / "sessions.js").read_text(encoding="utf-8")
-    loop_start = src.index("for(const s of unpinned){")
-    loop_body = src[loop_start:src.index("if(curItems.length) groups.push", loop_start)]
-
-    assert "const ts=_sessionSortTimestampMs(s);" in loop_body
-    assert "_sessionTimeBucketLabel(ts, now)" in loop_body

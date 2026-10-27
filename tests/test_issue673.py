@@ -119,9 +119,8 @@ class TestSidebarDensitySessionRendering(unittest.TestCase):
         self.assertIn("t('session_meta_messages', _visibleCount)", SESSIONS_JS)
 
     def test_profile_only_when_show_all_profiles(self):
-        self.assertIn(
-            "if(_showAllProfiles&&s.profile) metaBits.push(s.profile);", SESSIONS_JS
-        )
+        # The profile group header already names the profile (profile-sidebar RFC).
+        self.assertNotIn("metaBits.push(s.profile)", SESSIONS_JS)
 
     def test_session_meta_css_hook_present(self):
         self.assertIn(".session-meta", STYLE_CSS)

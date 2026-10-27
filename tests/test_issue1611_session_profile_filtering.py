@@ -209,19 +209,17 @@ def test_static_sessions_js_switches_profile_before_opening_all_profiles_row():
     assert "await _openSidebarSession(childSession, {skipLineageResolve:true});" in src
 
 
-def test_static_all_profiles_toggle_is_persisted_and_not_reset_by_profile_switch():
-    """The all-profiles toggle is a shared navigation preference, not per-profile state."""
+def test_static_sidebar_always_loads_all_profiles_and_switch_keeps_it():
+    """The sidebar groups by profile, so all-profiles loading is fixed on (no toggle/storage key)."""
     from pathlib import Path
 
     repo_root = Path(__file__).parent.parent
     sessions_src = (repo_root / 'static' / 'sessions.js').read_text(encoding='utf-8')
     panels_src = (repo_root / 'static' / 'panels.js').read_text(encoding='utf-8')
 
-    assert "const SHOW_ALL_PROFILES_STORAGE_KEY = 'hermes-show-all-profiles';" in sessions_src
-    assert "localStorage.setItem(SHOW_ALL_PROFILES_STORAGE_KEY" in sessions_src
-    assert "_restoreShowAllProfiles();" in sessions_src
-    assert "_setShowAllProfiles(true);renderSessionList({deferWhileInteracting:false});" in sessions_src
-    assert "_setShowAllProfiles(false);renderSessionList({deferWhileInteracting:false});" in sessions_src
+    assert "let _showAllProfiles = true;" in sessions_src
+    assert "SHOW_ALL_PROFILES_STORAGE_KEY" not in sessions_src
+    assert "_setShowAllProfiles" not in sessions_src
 
     switch_start = panels_src.index("async function switchToProfile(name) {")
     switch_body = panels_src[switch_start:panels_src.index("function openProfileCreate", switch_start)]

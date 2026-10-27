@@ -5211,8 +5211,7 @@ let _allProjects = [];  // cached project list
 // double-underscore prefixes provide.
 const NO_PROJECT_FILTER = '__none__';
 let _activeProject = null;  // project_id filter (null = show all, NO_PROJECT_FILTER = unassigned only)
-const SHOW_ALL_PROFILES_STORAGE_KEY = 'hermes-show-all-profiles';
-let _showAllProfiles = false;  // false = filter to active profile only
+let _showAllProfiles = true;  // sidebar always groups by profile (docs/rfcs/profile-sidebar-and-reasoning.md)
 let _profileSwitchOpeningExistingSession = false;  // true while cross-profile sidebar click switches profile before loadSession()
 let _otherProfileCount = 0;       // count of sessions from other profiles (server-reported)
 let _archivedWebuiCount = 0;      // archived WebUI sessions not fetched until requested
@@ -5222,19 +5221,6 @@ let _serverWebuiSessionCount = null;  // explicit server count for WebUI session
 let _serverCliSessionCount = null;    // explicit server count for CLI sessions
 let _sessionSourceFilter = 'webui';  // 'webui' keeps WebUI chats separate from read-only CLI sessions
 
-function _restoreShowAllProfiles(){
-  try{
-    const raw=localStorage.getItem(SHOW_ALL_PROFILES_STORAGE_KEY);
-    _showAllProfiles = raw === '1' || raw === 'true';
-  }catch(_e){ _showAllProfiles = false; }
-}
-
-function _setShowAllProfiles(enabled){
-  _showAllProfiles=!!enabled;
-  try{ localStorage.setItem(SHOW_ALL_PROFILES_STORAGE_KEY,_showAllProfiles?'1':'0'); }catch(_e){}
-}
-
-_restoreShowAllProfiles();
 _restoreSessionSourceFilter();
 let _sessionActionMenu = null;
 let _sessionActionAnchor = null;
@@ -8467,6 +8453,28 @@ function _sessionSidebarSortCompare(a, b) {
   return _sessionSortTimestampMs(b) - _sessionSortTimestampMs(a);
 }
 
+// Sidebar grouping: one group per profile (active first, rest alphabetical),
+// empty profiles kept, pinned rows first. `ordered` is already time-sorted.
+function _groupSessionsByProfile(ordered, profileNames, activeProfile){
+  const active=activeProfile||'default';
+  const norm=p=>{
+    const n=(typeof p==='string'&&p.trim())||'default';
+    return _profileMatchesActiveProfile(n,active)?active:n;
+  };
+  const byName=new Map([[active,[]]]);
+  for(const n of profileNames||[]){ const k=norm(n); if(!byName.has(k)) byName.set(k,[]); }
+  for(const s of ordered){
+    const k=norm(s.profile);
+    if(!byName.has(k)) byName.set(k,[]);
+    byName.get(k).push(s);
+  }
+  const rest=[...byName.keys()].filter(n=>n!==active).sort();
+  return [active,...rest].map(n=>{
+    const all=byName.get(n);
+    return {key:'profile:'+n,label:n,profile:n,isActive:n===active,items:[...all.filter(s=>s.pinned),...all.filter(s=>!s.pinned)]};
+  });
+}
+
 function _serverNowMs() {
   // Compensate for clock skew between client and server (issue #1144).
   // Returns an approximation of the current server time in ms.
@@ -9881,6 +9889,32 @@ function _restoreSessionOpenControlFocus(list, sid){
 }
 
 
+const PROFILE_GROUP_LIMIT = 5;
+const _profileGroupsExpanded = new Set();  // in-memory "Show more" state
+let _sidebarProfilesRequested = false;
+
+function _showProfileGroupMenu(anchor, profile){
+  document.querySelectorAll('.profile-group-menu').forEach(el=>el.remove());
+  const menu=document.createElement('div');
+  menu.className='profile-group-menu';
+  const r=anchor.getBoundingClientRect();
+  menu.style.cssText='position:fixed;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:6px 0;z-index:9999;min-width:170px;box-shadow:0 4px 16px rgba(0,0,0,.35);left:'+Math.max(8,r.right-170)+'px;top:'+r.bottom+'px;';
+  const add=(text,fn)=>{
+    const it=document.createElement('div');
+    it.textContent=text;
+    it.style.cssText='padding:7px 14px;cursor:pointer;font-size:13px;color:var(--text);';
+    it.onmouseenter=()=>it.style.background='var(--hover-bg)';
+    it.onmouseleave=()=>it.style.background='';
+    it.onclick=()=>{menu.remove();fn();};
+    menu.appendChild(it);
+  };
+  add('New chat in this profile',async()=>{ if(await switchToProfile(profile)!==false){ await newSession(true); if(typeof closeMobileSidebar==='function') closeMobileSidebar(); } });
+  add('Switch to profile',()=>switchToProfile(profile));
+  document.body.appendChild(menu);
+  const off=(e)=>{ if(!menu.contains(e.target)){ menu.remove(); document.removeEventListener('mousedown',off,true); } };
+  setTimeout(()=>document.addEventListener('mousedown',off,true),0);
+}
+
 function renderSessionListFromCache(){
   // #4671: while a profile-switch skeleton is up, bail — _allSessions still holds the
   // PREVIOUS profile's rows until /api/sessions resolves, so any unrelated caller
@@ -9909,6 +9943,7 @@ function renderSessionListFromCache(){
   // now (see _projectPickerBlocksRepaint).
   if(_projectPickerBlocksRepaint()){ if(typeof _sessionListRepaintDeferredByPicker!=='undefined') _sessionListRepaintDeferredByPicker=true; return; }
   closeSessionActionMenu();
+  document.querySelectorAll('.profile-group-menu').forEach(el=>el.remove());
   // Purge stale INFLIGHT entries for sessions the server confirms are NOT
   // streaming. This runs on every list refresh to prevent memory leaks from
   // interrupted streams. (#2066)
@@ -10104,25 +10139,6 @@ function renderSessionListFromCache(){
     bar.appendChild(addBtn);
     list.appendChild(bar);
   }
-  // Profile filter toggle (show sessions from other profiles).
-  // Cross-profile rows live SERVER-SIDE behind ?all_profiles=1, so the toggle
-  // must trigger a refetch — there's no client-cached aggregate to slice through.
-  // The server is authoritative for the count (renamed-root cross-alias is
-  // server-side). A naive strict-equality client fallback would mis-count.
-  const otherProfileCount = _otherProfileCount;
-  if(otherProfileCount>0&&!_showAllProfiles){
-    const pfToggle=document.createElement('div');
-    pfToggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
-    pfToggle.textContent='Show '+otherProfileCount+' from other profiles';
-    pfToggle.onclick=()=>{_setShowAllProfiles(true);renderSessionList({deferWhileInteracting:false});};
-    list.appendChild(pfToggle);
-  } else if(_showAllProfiles){
-    const pfToggle=document.createElement('div');
-    pfToggle.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.7;';
-    pfToggle.textContent='Show active profile only';
-    pfToggle.onclick=()=>{_setShowAllProfiles(false);renderSessionList({deferWhileInteracting:false});};
-    list.appendChild(pfToggle);
-  }
   // Show/hide archived toggle if there are archived sessions. Archived rows
   // are fetched on demand so large histories do not bloat every sidebar poll.
   if(archivedCount>0||_showArchived){
@@ -10152,8 +10168,6 @@ function renderSessionListFromCache(){
   // Separate pinned from unpinned
   const pinned=orderedSessions.filter(s=>s.pinned);
   const unpinned=orderedSessions.filter(s=>!s.pinned);
-  // Date grouping: Pinned / Today / Yesterday / This week / Last week / Older
-  const now=_serverNowMs();
   // Collapse state: in-memory authority, localStorage as best-effort
   // persistence. If the write fails (quota, blocked storage) the toggle must
   // still take effect for this session instead of silently reverting (#7953).
@@ -10206,22 +10220,28 @@ function renderSessionListFromCache(){
       if(typeof console!=='undefined'&&console.warn) console.warn('hermes: date-group collapse state could not be persisted', e);
     }
   };
-  // Group sessions by date
-  const groups=[];
-  let curLabel=null,curItems=[];
-  if(pinned.length) groups.push({label:'\u2605 Pinned',items:pinned,isPinned:true});
-  for(const s of unpinned){
-    const ts=_sessionSortTimestampMs(s);
-    const label=_sessionTimeBucketLabel(ts, now);
-    if(label!==curLabel){
-      if(curItems.length) groups.push({label:curLabel,items:curItems});
-      curLabel=label;curItems=[s];
-    } else { curItems.push(s); }
+  // Group sessions by profile (names from /api/profiles, fetched once on demand).
+  const _pd=(typeof _profilesCache!=='undefined')?_profilesCache:null;
+  if(!(_pd&&Array.isArray(_pd.profiles))&&!_sidebarProfilesRequested&&typeof _profileDropdownFetchFresh==='function'){
+    _sidebarProfilesRequested=true;
+    _profileDropdownFetchFresh().catch(()=>{}).then(()=>renderSessionListFromCache());
   }
-  if(curItems.length) groups.push({label:curLabel,items:curItems});
+  const _filtered=Boolean(q||_activeProject||_sessionSourceFilter==='cli');
+  const groups=_groupSessionsByProfile(
+    [...pinned,...unpinned],
+    _pd&&Array.isArray(_pd.profiles)?_pd.profiles.map(p=>p.name):[],
+    S.activeProfile||'default'
+  ).filter(g=>!_filtered||g.items.length);
+  // 5-row cap per group ("Show more" is in-memory only); search lifts it, the active row always stays.
+  for(const g of groups){
+    g.total=g.items.length;
+    if(!searchQueryRaw&&!_profileGroupsExpanded.has(g.profile)){
+      g.items=g.items.filter((s,i)=>i<PROFILE_GROUP_LIMIT||_sessionLineageContainsSession(s,activeSidForSidebar));
+    }
+  }
   const flatSessionRows=[];
   for(const g of groups){
-    if(_groupCollapsed[g.label]) continue;
+    if(_groupCollapsed[g.key]) continue;
     for(const s of g.items){ flatSessionRows.push({group:g,session:s}); }
   }
   _sessionVisibleSidebarIds=flatSessionRows.map(row=>row.session&&row.session.session_id).filter(Boolean);
@@ -10283,23 +10303,28 @@ function renderSessionListFromCache(){
     const wrapper=document.createElement('div');
     wrapper.className='session-date-group';
     const hdr=document.createElement('div');
-    hdr.className='session-date-header'+(g.isPinned?' pinned':'');
+    hdr.className='session-date-header profile-group'+(g.isActive?' active-profile':'');
     const caret=document.createElement('span');
     caret.className='session-date-caret';
     caret.textContent='\u25BE'; // down when expanded; rotated right when collapsed
     const label=document.createElement('span');
     label.textContent=g.label;
     hdr.appendChild(caret);hdr.appendChild(label);
+    const menuBtn=document.createElement('button');
+    menuBtn.type='button';menuBtn.className='profile-group-menu-btn';
+    menuBtn.textContent='\u22EF';menuBtn.title='Profile actions';
+    menuBtn.onclick=(e)=>{e.stopPropagation();_showProfileGroupMenu(menuBtn,g.profile);};
+    hdr.appendChild(menuBtn);
     const body=document.createElement('div');
     body.className='session-date-body';
-    const isGroupCollapsed=Boolean(_groupCollapsed[g.label]);
+    const isGroupCollapsed=Boolean(_groupCollapsed[g.key]);
     if(isGroupCollapsed){body.style.display='none';caret.classList.add('collapsed');}
     hdr.onclick=()=>{
       const isCollapsed=body.style.display==='none';
       body.style.display=isCollapsed?'':'none';
       caret.classList.toggle('collapsed',!isCollapsed);
-      _pending.add(g.label);
-      _groupCollapsed[g.label]=!isCollapsed;
+      _pending.add(g.key);
+      _groupCollapsed[g.key]=!isCollapsed;
       _saveCollapsed();
       renderSessionListFromCache();
     };
@@ -10310,15 +10335,28 @@ function renderSessionListFromCache(){
       if(isGroupCollapsed) continue;
       const rowIndex=globalSessionRowIndex++;
       const inWindow=!virtualWindow.virtualized||(rowIndex>=virtualWindow.start&&rowIndex<virtualWindow.end);
-      if(inWindow){ body.appendChild(_renderOneSession(s, Boolean(g.isPinned))); }
+      if(inWindow){ body.appendChild(_renderOneSession(s, false)); }
       else if(rowIndex<virtualWindow.start){ groupTopPad+=virtualWindow.itemHeight; }
       else { groupBottomPad+=virtualWindow.itemHeight; }
     }
     if(groupTopPad>0){ body.insertBefore(_sessionVirtualSpacer(groupTopPad,'before'), body.firstChild); }
     if(groupBottomPad>0){ body.appendChild(_sessionVirtualSpacer(groupBottomPad,'after')); }
     wrapper.appendChild(body);
+    if(!isGroupCollapsed&&g.total>g.items.length){
+      const more=document.createElement('div');
+      more.className='session-archive-more';
+      more.style.cssText='font-size:10px;padding:4px 10px;color:var(--muted);cursor:pointer;opacity:.8;';
+      more.textContent='Show '+(g.total-g.items.length)+' more';
+      more.onclick=()=>{_profileGroupsExpanded.add(g.profile);renderSessionListFromCache();};
+      wrapper.appendChild(more);
+    }
     list.appendChild(wrapper);
   }
+  const addProfile=document.createElement('button');
+  addProfile.type='button';addProfile.className='profile-add-btn';
+  addProfile.textContent='+ Add profile';
+  addProfile.onclick=()=>openProfileCreate();
+  list.appendChild(addProfile);
   if(virtualAnchorScrollTop!==null){
     list.scrollTop=virtualAnchorScrollTop;
   }else if(listScrollTopBeforeRender>0){
@@ -10615,7 +10653,6 @@ function renderSessionListFromCache(){
       const sourceLabel=_getChannelLabel(s);
       if(sourceLabel&&(s.is_cli_session||_isMessagingSession(s))) metaBits.push(sourceLabel);
       if(readOnly) metaBits.push('read-only');
-      if(_showAllProfiles&&s.profile) metaBits.push(s.profile);
       const meta=document.createElement('div');
       meta.className='session-meta';
       meta.textContent=metaBits.join(' · ');
@@ -11472,14 +11509,6 @@ async function _handleActiveSessionStorageEvent(e){
   if(typeof _repaintSidebarForBackgroundChurn==='function') _repaintSidebarForBackgroundChurn();
 }
 
-async function _handleShowAllProfilesStorageEvent(e){
-  if(!e || e.key !== SHOW_ALL_PROFILES_STORAGE_KEY) return;
-  const next=e.newValue==='1'||e.newValue==='true';
-  if(_showAllProfiles===next) return;
-  _showAllProfiles=next;
-  if(typeof renderSessionList==='function') await renderSessionList({deferWhileInteracting:false});
-}
-
 function _handleUnreadStorageEvent(e){
   if(!e || !e.key) return;
   // A concurrent WebUI client on the same origin/profile changed one of the
@@ -11503,7 +11532,6 @@ function _handleUnreadStorageEvent(e){
 if(typeof window!=='undefined'){
   window.addEventListener('storage', (e) => {
     void _handleActiveSessionStorageEvent(e);
-    void _handleShowAllProfilesStorageEvent(e);
     void _handleUnreadStorageEvent(e);
   });
   window.addEventListener('popstate', () => {

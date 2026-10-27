@@ -7309,6 +7309,7 @@ async function deleteCurrentProfile(){
     _invalidateKanbanProfileCache();
     _clearProfileDetail();
     await loadProfilesPanel();
+    if (typeof renderSessionList === 'function') renderSessionList({deferWhileInteracting:false});
     showToast(t('profile_deleted', name));
   } catch (e) { showToast(t('delete_failed') + e.message); }
 }
@@ -7944,6 +7945,7 @@ async function saveProfileForm(){
     _invalidateKanbanProfileCache();
     _profilePreFormDetail = null;
     await loadProfilesPanel();
+    if (typeof renderSessionList === 'function') renderSessionList({deferWhileInteracting:false});
     showToast(t('profile_created', name));
     openProfileDetail(name);
   } catch (e) {
@@ -7964,6 +7966,7 @@ async function deleteProfile(name) {
     await api('/api/profile/delete', { method: 'POST', body: JSON.stringify({ name }) });
     _invalidateKanbanProfileCache();
     await loadProfilesPanel();
+    if (typeof renderSessionList === 'function') renderSessionList({deferWhileInteracting:false});
     showToast(t('profile_deleted', name));
   } catch (e) { showToast(t('delete_failed') + e.message); }
 }

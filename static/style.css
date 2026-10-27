@@ -1865,6 +1865,12 @@
   .session-date-header{display:flex;align-items:center;gap:5px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);padding:8px 10px 4px;cursor:pointer;user-select:none;opacity:.8;transition:opacity .15s;}
   .session-date-header:hover{opacity:1;}
   .session-date-header.pinned{color:var(--accent);}
+  .session-date-header.profile-group{text-transform:none;font-size:11px;letter-spacing:.02em;}
+  .session-date-header.active-profile{color:var(--accent);}
+  .profile-group-menu-btn{margin-left:auto;background:none;border:0;color:inherit;cursor:pointer;font-size:14px;line-height:1;padding:0 4px;opacity:.7;}
+  .profile-group-menu-btn:hover{opacity:1;}
+  .profile-add-btn{display:block;width:calc(100% - 20px);margin:8px 10px;padding:6px;font-size:12px;color:var(--muted);background:none;border:1px dashed var(--border);border-radius:6px;cursor:pointer;}
+  .profile-add-btn:hover{color:var(--text);border-color:var(--accent);}
 
   /* ── Batch select mode ── */
   .session-select-toggle{font-size:11px;padding:6px 10px;color:var(--muted);cursor:pointer;text-align:center;opacity:.6;transition:opacity .15s;user-select:none;margin-top:4px;border-radius:6px;}
