@@ -31738,8 +31738,9 @@ def _relay_gateway_run_approval(
             )
 
         base_url, api_key = gateway_run_endpoint(run_id)
+        generation = current_mirror.get("execution_generation")
         identity_v1 = bool(current_mirror.get(_GATEWAY_AGENT_IDENTITY_V1)) and (
-            gateway_supports_approval_identity_v1(base_url, api_key)
+            generation is not None or gateway_supports_approval_identity_v1(base_url, api_key)
         )
         if not identity_v1:
             run_head = gateway_pending_mirror(sid, run_id=run_id)
@@ -31761,6 +31762,7 @@ def _relay_gateway_run_approval(
                 run_id,
                 approval_id if identity_v1 else "",
                 choice,
+                **({} if generation is None else {"execution_generation": generation}),
             )
             relay_succeeded = True
         except (RunnerClientError, ValueError) as exc:

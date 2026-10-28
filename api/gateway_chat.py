@@ -428,6 +428,7 @@ def _settle_gateway_run_approval(
                     api_key,
                     run_id,
                     approval_data["approval_id"] if identity_v1 else "",
+                    *([] if approval_data.get("execution_generation") is None else [approval_data["execution_generation"]]),
                 )
                 return True, None, 0
             except Exception:
@@ -447,6 +448,7 @@ def _auto_approve_gateway_run(
     api_key: str,
     run_id: str,
     approval_id: str,
+    execution_generation: int | None = None,
 ) -> None:
     """Resolve one Runs API prompt using only the shipped approval contract.
 
@@ -463,6 +465,7 @@ def _auto_approve_gateway_run(
         run_id,
         approval_id,
         "once",
+        **({} if execution_generation is None else {"execution_generation": execution_generation}),
     )
 
 
@@ -605,7 +608,11 @@ def _gateway_runs_approval_event(payload: dict) -> dict | None:
     pattern_key = str(payload.get("pattern_key") or "").strip()
     args = payload.get("args") if isinstance(payload.get("args"), (list, dict)) else []
     run_id = str(payload.get("run_id") or "").strip()
-    raw_approval_id = str(payload.get("approval_id") or payload.get("id") or "").strip()
+    # Session-authority gateways name the prompt id ``prompt_id``/``request_id`` and add ``execution_generation``.
+    raw_approval_id = str(
+        payload.get("approval_id") or payload.get("id") or payload.get("request_id") or payload.get("prompt_id") or ""
+    ).strip()
+    generation = payload.get("execution_generation")
     approval_id = raw_approval_id
     if not approval_id:
         approval_id = uuid.uuid4().hex
@@ -627,6 +634,7 @@ def _gateway_runs_approval_event(payload: dict) -> dict | None:
         "run_id": run_id,
         "approval_id": approval_id,
         "_gateway_raw_approval_id_present": bool(raw_approval_id),
+        "execution_generation": generation if type(generation) is int else None,
         "choices": choices,
         "allow_permanent": bool(allow_permanent),
     }
@@ -649,7 +657,10 @@ def _relay_gateway_run_approval(session_id, run_id, payload, base_url, api_key, 
         return False
     approval_data["run_id"] = run_id
     from api.config import gateway_supports_approval_identity_v1
-    identity_v1 = bool(approval_data.get("_gateway_raw_approval_id_present")) and gateway_supports_approval_identity_v1(base_url, api_key)
+    identity_v1 = bool(approval_data.get("_gateway_raw_approval_id_present")) and (
+        approval_data.get("execution_generation") is not None
+        or gateway_supports_approval_identity_v1(base_url, api_key)
+    )
     approval_data["_gateway_agent_identity_v1"] = identity_v1
     auto_approved, head, total = _settle_gateway_run_approval(
         session_id,

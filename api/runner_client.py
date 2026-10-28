@@ -79,11 +79,16 @@ class HttpRunnerClient:
     def cancel_run(self, run_id: str) -> dict[str, Any]:
         return self._post(f"/v1/runs/{urllib.parse.quote(str(run_id), safe='')}/cancel", {})
 
-    def respond_approval(self, run_id: str, approval_id: str, choice: str) -> dict[str, Any]:
-        return self._post(
-            f"/v1/runs/{urllib.parse.quote(str(run_id), safe='')}/approval",
-            {"choice": choice, "approval_id": approval_id},
-        )
+    def respond_approval(
+        self, run_id: str, approval_id: str, choice: str, execution_generation: int | None = None,
+    ) -> dict[str, Any]:
+        path = f"/v1/runs/{urllib.parse.quote(str(run_id), safe='')}/approval"
+        if execution_generation is not None:
+            # Session-authority gateways accept exactly these three keys (anything else -> invalid_params).
+            return self._post(path, {
+                "request_id": approval_id, "execution_generation": execution_generation, "choice": choice,
+            })
+        return self._post(path, {"choice": choice, "approval_id": approval_id})
 
     def respond_clarify(self, run_id: str, clarify_id: str, response: str) -> dict[str, Any]:
         return self._post(
